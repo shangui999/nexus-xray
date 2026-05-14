@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: xray-manager-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xray_manager
+      POSTGRES_USER: xray_manager
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-xray_manager_pass}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xray_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: xray-manager-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=xray_manager
+      - DB_PASSWORD=${DB_PASSWORD:-xray_manager_pass}
+      - DB_NAME=xray_manager
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - SUBSCRIPTION_SECRET=${SUBSCRIPTION_SECRET:-change-me-subscription}
+      - HTTP_PORT=8080
+      - GRPC_PORT=8082
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "0.0.0.0:8082:8082"  # gRPC 需要 Agent 直连（或通过 CF Tunnel）
+    volumes:
+      - ./configs:/app/configs
+      - certs_data:/app/certs
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: xray-manager-tunnel
+    restart: unless-stopped
+    depends_on:
+      - server
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    # 或者使用配置文件模式：
+    # volumes:
+    #   - ./cloudflared:/etc/cloudflared
+
+volumes:
+  pg_data:
+  certs_data:

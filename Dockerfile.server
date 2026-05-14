@@ -1,0 +1,35 @@
+# Build stage
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache git make
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/bin/server ./cmd/server
+
+# Frontend build stage
+FROM node:20-alpine AS frontend
+
+WORKDIR /app/web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ .
+RUN npm run build
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+COPY --from=builder /app/bin/server /app/server
+COPY --from=frontend /app/web/dist /app/web/dist
+COPY configs/server.yaml /app/configs/server.yaml
+
+EXPOSE 8080 8082
+
+ENTRYPOINT ["/app/server"]
+CMD ["-config", "/app/configs/server.yaml"]

@@ -1,0 +1,20 @@
+server:
+  http_port: 8080
+  grpc_port: 8082
+  jwt_secret: "change-me-in-production"
+
+database:
+  host: localhost
+  port: 5432
+  user: xray_manager
+  password: xray_manager_pass
+  dbname: xray_manager
+  sslmode: disable
+
+log:
+  level: info
+  format: json
+
+agent_release:
+  dir: "./releases"
+  current_version: "1.0.0"

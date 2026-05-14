@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      
+      - name: Build Frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Build Server binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          
+          # Server - Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-w -s -X main.version=${VERSION}" \
+            -o dist/nexus-xray-server-linux-amd64 ./cmd/server
+          
+          # Server - Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -ldflags="-w -s -X main.version=${VERSION}" \
+            -o dist/nexus-xray-server-linux-arm64 ./cmd/server
+      
+      - name: Build Agent binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          
+          # Agent - Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-w -s -X github.com/shangui999/nexus-xray/internal/agent/updater.Version=${VERSION}" \
+            -o dist/nexus-xray-agent-linux-amd64 ./cmd/agent
+          
+          # Agent - Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -ldflags="-w -s -X github.com/shangui999/nexus-xray/internal/agent/updater.Version=${VERSION}" \
+            -o dist/nexus-xray-agent-linux-arm64 ./cmd/agent
+      
+      - name: Package Frontend
+        run: |
+          cd web/dist && tar -czf ../../dist/nexus-xray-web.tar.gz .
+      
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/nexus-xray-server-linux-amd64
+            dist/nexus-xray-server-linux-arm64
+            dist/nexus-xray-agent-linux-amd64
+            dist/nexus-xray-agent-linux-arm64
+            dist/nexus-xray-web.tar.gz
+            dist/checksums.txt
+          body: |
+            ## 安装
+            
+            ### Server 部署
+            ```bash
+            # 下载
+            wget https://github.com/shangui999/nexus-xray/releases/download/${{ steps.version.outputs.VERSION }}/nexus-xray-server-linux-amd64
+            chmod +x nexus-xray-server-linux-amd64
+            ```
+            
+            ### Agent 一键安装
+            ```bash
+            curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/install-agent.sh | bash -s -- \
+              --server=your-server:8082 \
+              --node-id=xxx \
+              --token=xxx
+            ```
+            
+            ### 校验
+            下载 `checksums.txt` 并验证：
+            ```bash
+            sha256sum -c checksums.txt
+            ```

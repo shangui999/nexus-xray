@@ -1,0 +1,31 @@
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+
+ARG VERSION=dev
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s -X github.com/shangui999/nexus-xray/internal/agent/updater.Version=${VERSION}" -o /app/bin/agent ./cmd/agent
+
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata wget
+
+# 下载 xray-core
+ARG XRAY_VERSION=1.8.24
+RUN wget -O /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" && \
+    unzip /tmp/xray.zip -d /usr/local/bin/ xray && \
+    chmod +x /usr/local/bin/xray && \
+    rm /tmp/xray.zip
+
+WORKDIR /app
+COPY --from=builder /app/bin/agent /app/agent
+COPY configs/agent.yaml /app/configs/agent.yaml
+
+EXPOSE 443
+
+ENTRYPOINT ["/app/agent"]
+CMD ["-config", "/app/configs/agent.yaml"]

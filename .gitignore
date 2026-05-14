@@ -1,0 +1,34 @@
+# Binaries
+bin/
+*.exe
+
+# Environment
+.env
+*.env.local
+
+# Database
+*.db
+
+# Certificates
+certs/
+*.pem
+*.key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules
+web/node_modules/
+web/dist/
+
+# Go
+vendor/
+
+# Temp
+/tmp/

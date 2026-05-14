@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package nodehub.v1;
+
+option go_package = "github.com/shangui999/nexus-xray/internal/common/proto/nodehub/v1";
+
+service NodeAgentService {
+  // Session 是 Server 与 Agent 之间的双向流式 RPC，
+  // 用于实时下发指令和接收状态上报。
+  rpc Session(stream NodeMessage) returns (stream ServerMessage);
+}
+
+// ServerMessage 是 Server 下发给 Agent 的指令
+message ServerMessage {
+  string id = 1;     // 指令唯一 ID
+  string method = 2; // 指令方法名 (如 UpdateConfig, RestartXray)
+  bytes body = 3;    // 指令负载 (JSON 编码)
+}
+
+// NodeMessage 是 Agent 上报给 Server 的消息
+message NodeMessage {
+  string id = 1;     // 对应 ServerMessage 的 ID
+  string event = 2;  // 事件类型 (如 StatsReport, XrayStatus)
+  bool ok = 3;       // 操作是否成功
+  bytes body = 4;    // 消息负载 (JSON 编码)
+  string error = 5;  // 错误信息
+  int64 seq = 6;     // 序列号，用于流式消息排序
+}

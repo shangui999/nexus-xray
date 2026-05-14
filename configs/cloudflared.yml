@@ -1,0 +1,16 @@
+# Cloudflare Tunnel 配置示例
+# 使用方式:
+# 1. 在 Cloudflare Zero Trust 控制台创建 Tunnel
+# 2. 获取 Tunnel Token
+# 3. 设置环境变量 CF_TUNNEL_TOKEN=<your-token>
+# 
+# 或者使用配置文件模式:
+# tunnel: <your-tunnel-id>
+# credentials-file: /etc/cloudflared/credentials.json
+#
+# ingress:
+#   - hostname: panel.yourdomain.com
+#     service: http://server:8080
+#   - hostname: grpc.yourdomain.com
+#     service: grpc://server:8082
+#   - service: http_status:404

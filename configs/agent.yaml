@@ -1,0 +1,16 @@
+agent:
+  node_id: ""  # 注册时填写
+  server_addr: "your-server.example.com:8082"
+  cert_dir: "/etc/xray-manager/certs"
+  stats_interval: 10s
+  node_token: ""  # 认证 token，用于升级等 HTTP API
+  update_interval: 1h  # 自动升级检查间隔
+  http_addr: "your-server.example.com:8080"  # Server HTTP 地址（用于下载升级包）
+
+xray:
+  # Xray 内嵌配置
+  log_level: warning
+
+log:
+  level: info
+  format: json
