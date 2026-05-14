@@ -20,9 +20,11 @@ services:
       retries: 5
 
   server:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
+    image: ghcr.io/shangui999/nexus-xray-server:latest
+    # 如需本地构建，取消注释以下行并注释 image:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.server
     container_name: nexus-xray-server
     restart: unless-stopped
     depends_on:

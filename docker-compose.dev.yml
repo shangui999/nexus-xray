@@ -12,3 +12,19 @@ services:
       - "5432:5432"
     volumes:
       - ./data/postgres-dev:/var/lib/postgresql/data
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: nexus-xray-server-dev
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=nexus_xray
+      - DB_PASSWORD=nexus_xray_pass
+      - DB_NAME=nexus_xray
+    depends_on:
+      - postgres

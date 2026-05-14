@@ -132,9 +132,16 @@ curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/i
 脚本会自动完成：
 1. 检测系统并安装 Docker / Docker Compose
 2. 创建安装目录 `/opt/nexus-xray`
-3. 下载 Docker Compose 配置与 Dockerfile
+3. 下载 Docker Compose 配置（使用 GHCR 预构建镜像，无需本地构建）
 4. 生成随机密码和密钥（`.env` 文件）
 5. 启动 PostgreSQL 和 Server 容器
+
+Docker 镜像地址：`ghcr.io/shangui999/nexus-xray-server`
+
+手动拉取镜像：
+```bash
+docker pull ghcr.io/shangui999/nexus-xray-server:latest
+```
 
 部署完成后访问 `http://<服务器IP>:8080`，默认账号 `admin / admin123`。
 

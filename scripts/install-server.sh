@@ -67,11 +67,8 @@ download_files() {
     
     BASE_URL="https://raw.githubusercontent.com/${REPO}/main"
     
-    # 下载 docker-compose.yml
+    # 下载 docker-compose.yml（使用 GHCR 镜像，无需本地构建）
     curl -sSL "${BASE_URL}/docker-compose.yml" -o docker-compose.yml
-    
-    # 下载 Dockerfile
-    curl -sSL "${BASE_URL}/Dockerfile.server" -o Dockerfile.server
     
     # 下载默认配置
     curl -sSL "${BASE_URL}/configs/server.yaml" -o data/configs/server.yaml
