@@ -15,6 +15,9 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
+// version 编译时注入的 Server 版本号
+var version = "dev"
+
 func main() {
 	// 加载配置
 	cfg, err := config.LoadServerConfig("configs/server.yaml")
@@ -36,7 +39,8 @@ func main() {
 	}
 	defer logger.Sync()
 
-	logger.Info("xray-manager server starting",
+	logger.Info("nexus-xray server starting",
+		zap.String("version", version),
 		zap.Int("port", cfg.Server.HTTPPort),
 	)
 

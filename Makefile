@@ -1,14 +1,15 @@
 .PHONY: build-server build-agent proto frontend docker-build clean dev
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+SERVER_VERSION ?= $(shell jq -r '.server' version.json 2>/dev/null || echo "dev")
+AGENT_VERSION ?= $(shell jq -r '.agent' version.json 2>/dev/null || echo "dev")
 
-# 编译 Server 二进制
+# 编译 Server 二进制（带版本注入）
 build-server:
-	go build -o bin/server ./cmd/server
+	go build -ldflags="-w -s -X main.version=$(SERVER_VERSION)" -o bin/server ./cmd/server
 
 # 编译 Agent 二进制（带版本注入）
 build-agent:
-	go build -ldflags="-w -s -X github.com/shangui999/nexus-xray/internal/agent/updater.Version=$(VERSION)" -o bin/agent ./cmd/agent
+	go build -ldflags="-w -s -X github.com/shangui999/nexus-xray/internal/agent/updater.Version=$(AGENT_VERSION)" -o bin/agent ./cmd/agent
 
 # 生成 protobuf Go 代码
 proto:

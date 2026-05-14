@@ -36,13 +36,17 @@ jobs:
           npm ci
           npm run build
       
-      - name: Get version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      
+      - name: Read versions
+        id: versions
+        run: |
+          SERVER_VERSION=$(jq -r '.server' version.json)
+          AGENT_VERSION=$(jq -r '.agent' version.json)
+          echo "SERVER_VERSION=${SERVER_VERSION}" >> $GITHUB_OUTPUT
+          echo "AGENT_VERSION=${AGENT_VERSION}" >> $GITHUB_OUTPUT
+
       - name: Build Server binaries
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
+          VERSION=${{ steps.versions.outputs.SERVER_VERSION }}
           
           # Server - Linux amd64
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
@@ -56,7 +60,7 @@ jobs:
       
       - name: Build Agent binaries
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
+          VERSION=${{ steps.versions.outputs.AGENT_VERSION }}
           
           # Agent - Linux amd64
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
@@ -128,8 +132,7 @@ jobs:
         with:
           images: ghcr.io/shangui999/nexus-xray-server
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.versions.outputs.SERVER_VERSION }}
             type=raw,value=latest
 
       - name: Build and push Docker image
@@ -141,5 +144,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SERVER_VERSION=${{ steps.versions.outputs.SERVER_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
