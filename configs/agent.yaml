@@ -1,6 +1,6 @@
 agent:
   node_id: ""  # 注册时填写
-  server_addr: "your-server.example.com:8082"
+  server_addr: "your-server.example.com:8080"
   cert_dir: "/etc/xray-manager/certs"
   stats_interval: 10s
   node_token: ""  # 认证 token，用于升级等 HTTP API

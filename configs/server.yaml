@@ -1,8 +1,7 @@
 server:
   http_port: 8080
-  grpc_port: 8082
   jwt_secret: "change-me-in-production"
-  external_addr: "your-server.example.com:8082"  # Agent 连接地址
+  external_addr: "your-server.example.com:8080"  # Agent 连接地址（HTTP + gRPC 同端口）
 
 database:
   host: localhost

@@ -11,6 +11,6 @@
 # ingress:
 #   - hostname: panel.yourdomain.com
 #     service: http://server:8080
-#   - hostname: grpc.yourdomain.com
-#     service: grpc://server:8082
+#     originRequest:
+#       http2Origin: true    # 支持 gRPC over h2c
 #   - service: http_status:404

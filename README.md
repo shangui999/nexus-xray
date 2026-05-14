@@ -12,6 +12,7 @@ Server-Agent 架构的分布式 VPS Xray 代理管理平台，支持多节点集
 
 - 🌐 **Server-Agent 分布式架构** — 集中管理多台 VPS 节点，Agent 轻量部署
 - 🔒 **gRPC + mTLS 安全通信** — 双向 TLS 认证，确保 Server-Agent 链路安全
+- 🔀 **HTTP/gRPC 同端口分流** — 基于 h2c 的单端口设计，HTTP API 与 gRPC 共用 8080 端口
 - 📡 **多节点集中管理** — 统一管控所有节点状态、配置与生命周期
 - 👥 **完整用户订阅系统** — 自动生成订阅链接，兼容主流客户端
 - 🚀 **VLESS + Reality 协议支持** — 前沿协议组合，抗检测能力强
@@ -38,15 +39,15 @@ Server-Agent 架构的分布式 VPS Xray 代理管理平台，支持多节点集
                           │     Server       │
                           │  ┌────────────┐  │
                           │  │  HTTP API  │  │  ← Vue 3 管理面板
-                          │  │  (Gin)     │  │
+                          │  │  (Gin)     │  │  :8080
                           │  ├────────────┤  │
                           │  │  gRPC Hub  │  │  ← Agent 双向流
-                          │  │  (NodeHub) │  │
+                          │  │  (NodeHub) │  │  :8080
                           │  ├────────────┤  │
                           │  │ PostgreSQL │  │
                           │  └────────────┘  │
                           └────────┬─────────┘
-                                   │ gRPC + mTLS
+                                   │ gRPC (h2c)
                     ┌──────────────┼──────────────┐
                     │              │              │
              ┌──────▼──────┐┌─────▼───────┐┌─────▼───────┐
@@ -61,10 +62,11 @@ Server-Agent 架构的分布式 VPS Xray 代理管理平台，支持多节点集
 
 **通信流程：**
 - Server 通过 HTTP API 对外提供管理接口与订阅服务
+- Server 使用单端口设计（HTTP API + gRPC Agent 通信共用 8080 端口），基于 h2c 实现 HTTP/1.1 与 gRPC (HTTP/2) 同端口分流
 - Agent 通过 gRPC 双向流（`NodeAgentService.Session`）与 Server 保持长连接
 - Server 下发配置更新、重启 Xray、升级 Agent 等指令
 - Agent 上报流量统计、Xray 状态等事件
-- 全部通信经 mTLS 加密，Agent 需持有效证书方可连接
+- 全部通信经 mTLS 加密（生产环境），Agent 需持有效证书方可连接；开发模式支持 h2c 明文连接
 
 ---
 
@@ -169,8 +171,7 @@ bash scripts/generate-certs.sh ./data/certs
 在 [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) 控制台创建 Tunnel，获取 Token 填入 `.env`。
 
 Tunnel 路由示例：
-- `panel.yourdomain.com` → `http://server:8080`（管理面板）
-- `grpc.yourdomain.com` → `grpc://server:8082`（Agent 连接）
+- `panel.yourdomain.com` → `http://server:8080`（管理面板 + Agent gRPC，需启用 `http2Origin: true`）
 
 ##### 4. 启动服务
 
@@ -201,7 +202,7 @@ data/
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/install-agent.sh | bash -s -- \
-  --server=your-server.example.com:8082 \
+  --server=your-server.example.com:8080 \
   --node-id=your-node-id \
   --token=your-enrollment-token
 ```
@@ -218,7 +219,7 @@ curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/i
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--server` | Server gRPC 地址（必填） | — |
+| `--server` | Server 地址（含端口，HTTP+gRPC 同端口） | — |
 | `--node-id` | 节点 ID（必填） | — |
 | `--token` | 注册令牌（必填） | — |
 | `--install-dir` | 安装目录 | `/opt/xray-manager-agent` |
@@ -234,7 +235,7 @@ go build -o agent ./cmd/agent
 cat > agent.yaml <<EOF
 agent:
   node_id: "your-node-id"
-  server_addr: "your-server:8082"
+  server_addr: "your-server:8080"
   cert_dir: "/etc/xray-manager/certs"
   stats_interval: 10s
 
@@ -271,8 +272,7 @@ Server 可通过 gRPC 下发 `UpgradeAgent` 指令，Agent 收到后会：
 
 ```yaml
 server:
-  http_port: 8080        # HTTP API 端口
-  grpc_port: 8082        # gRPC NodeHub 端口
+  http_port: 8080        # HTTP API + gRPC 统一端口
   jwt_secret: "change-me-in-production"  # JWT 签名密钥（生产环境务必修改）
 
 database:
@@ -293,7 +293,7 @@ log:
 ```yaml
 agent:
   node_id: ""                              # 注册时填写，由 Server 分配
-  server_addr: "your-server.example.com:8082"  # Server gRPC 地址
+  server_addr: "your-server.example.com:8080"  # Server 地址（HTTP + gRPC 同端口）
   cert_dir: "/etc/xray-manager/certs"      # mTLS 证书目录
   stats_interval: 10s                      # 流量上报间隔
 

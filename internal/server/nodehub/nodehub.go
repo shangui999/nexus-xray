@@ -59,14 +59,17 @@ func (h *Hub) SetHeartbeatTimeout(d time.Duration) {
 func (h *Hub) Session(stream grpc.BidiStreamingServer[pb.NodeMessage, pb.ServerMessage]) error {
 	ctx := stream.Context()
 
-	// 1. 从 TLS peer cert 的 CN 提取 nodeID
+	// 1. 从 TLS peer cert 的 CN 提取 nodeID（h2c 模式下可能为空）
 	nodeID, err := extractNodeID(ctx)
 	if err != nil {
 		h.logger.Error("failed to extract node ID from TLS cert", zap.Error(err))
 		return fmt.Errorf("extract node ID: %w", err)
 	}
 
-	h.logger.Info("agent connected", zap.String("node_id", nodeID))
+	// h2c 模式下 nodeID 为空，需要从 hello 消息中获取
+	if nodeID == "" {
+		h.logger.Debug("no TLS node ID, waiting for hello message to identify agent")
+	}
 
 	// 2. 创建 session 并注册到 sessions map
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
@@ -135,6 +138,16 @@ func (h *Hub) Session(stream grpc.BidiStreamingServer[pb.NodeMessage, pb.ServerM
 func (h *Hub) handleNodeMessage(sess *Session, msg *pb.NodeMessage) {
 	switch msg.Event {
 	case "hello":
+		// 从 hello body 中提取 node_id（h2c 模式下的主要识别方式）
+		var helloBody struct {
+			NodeID string `json:"node_id"`
+		}
+		if err := json.Unmarshal(msg.Body, &helloBody); err == nil && helloBody.NodeID != "" {
+			if sess.NodeID == "" {
+				sess.NodeID = helloBody.NodeID
+				h.reindexSession("", helloBody.NodeID, sess)
+			}
+		}
 		h.logger.Info("received hello from agent",
 			zap.String("node_id", sess.NodeID),
 			zap.String("id", msg.Id),
@@ -201,14 +214,37 @@ func (h *Hub) registerSession(sess *Session) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	key := sess.NodeID
+	if key == "" {
+		key = "_pending_" // 临时 key，等待 hello 后 reindex
+	}
+
 	// 如果旧 session 存在，关闭它
-	if old, ok := h.sessions[sess.NodeID]; ok {
+	if old, ok := h.sessions[key]; ok {
 		old.cancel()
 		close(old.SendCh)
 	}
 
-	h.sessions[sess.NodeID] = sess
-	h.logger.Info("session registered", zap.String("node_id", sess.NodeID))
+	h.sessions[key] = sess
+	if sess.NodeID != "" {
+		h.logger.Info("session registered", zap.String("node_id", sess.NodeID))
+	}
+}
+
+// reindexSession 更新 session 的 key（h2c 模式下从 hello 消息获得 nodeID 后调用）
+func (h *Hub) reindexSession(oldKey, newKey string, sess *Session) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if oldKey == "" {
+		delete(h.sessions, "_pending_")
+	}
+	if old, ok := h.sessions[newKey]; ok {
+		old.cancel()
+		close(old.SendCh)
+	}
+	h.sessions[newKey] = sess
+	h.logger.Info("session reindexed", zap.String("node_id", newKey))
 }
 
 // unregisterSession 注销 session
@@ -307,6 +343,7 @@ func (h *Hub) IsNodeOnline(nodeID string) bool {
 }
 
 // extractNodeID 从 TLS peer certificate 的 CN 提取 nodeID
+// 在 h2c（非 TLS）模式下，TLS 信息不可用，返回空 nodeID 由后续逻辑处理
 func extractNodeID(ctx context.Context) (string, error) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
@@ -315,7 +352,9 @@ func extractNodeID(ctx context.Context) (string, error) {
 
 	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok {
-		return "", fmt.Errorf("no TLS info in peer auth info")
+		// h2c 模式：无 TLS 信息，返回空值
+		// 实际 nodeID 将从 hello 消息的 body 中提取
+		return "", nil
 	}
 
 	if len(tlsInfo.State.PeerCertificates) == 0 {

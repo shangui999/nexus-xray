@@ -2,38 +2,23 @@ package nodehub
 
 import (
 	"crypto/tls"
-	"fmt"
-	"net"
 
 	pb "github.com/shangui999/nexus-xray/internal/common/proto/nodehub/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"go.uber.org/zap"
 )
 
-// StartGRPCServer 启动带 mTLS 的 gRPC 服务
-func StartGRPCServer(port int, hub *Hub, tlsConfig *tls.Config, logger *zap.Logger) error {
-	// 1. 创建 TLS credentials (require client cert)
-	creds := credentials.NewTLS(tlsConfig)
+// NewGRPCServer 创建 gRPC server 实例（不监听，由 main 统一管理）
+// 如果 tlsConfig 为 nil，则不启用 TLS（适用于 h2c 明文模式）
+func NewGRPCServer(hub *Hub, tlsConfig *tls.Config) *grpc.Server {
+	var opts []grpc.ServerOption
+	if tlsConfig != nil {
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+	}
+	server := grpc.NewServer(opts...)
 
-	// 2. grpc.NewServer with credentials
-	server := grpc.NewServer(grpc.Creds(creds))
-
-	// 3. 注册 NodeAgentService
+	// 注册 NodeAgentService
 	pb.RegisterNodeAgentServiceServer(server, hub)
 
-	// 4. 监听端口并 Serve
-	addr := fmt.Sprintf(":%d", port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
-	}
-
-	logger.Info("gRPC server started", zap.Int("port", port))
-
-	if err := server.Serve(listener); err != nil {
-		return fmt.Errorf("gRPC server failed: %w", err)
-	}
-
-	return nil
+	return server
 }

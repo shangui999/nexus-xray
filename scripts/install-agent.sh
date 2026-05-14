@@ -45,7 +45,7 @@ parse_args() {
 
     if [ -z "$SERVER_ADDR" ] || [ -z "$NODE_ID" ] || [ -z "$TOKEN" ]; then
         log_error "--server, --node-id, and --token are required"
-        echo "Usage: $0 --server=host:port --node-id=id --token=secret"
+        echo "Usage: $0 --server=host:port --node-id=id --token=secret [--install-dir=/opt/xray-manager-agent] [--xray-version=1.8.24]"
         exit 1
     fi
 }
