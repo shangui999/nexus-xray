@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -132,9 +133,27 @@ func (u *Updater) checkAndUpdate() error {
 	return nil
 }
 
-// checkVersion 从 Server 获取最新版本信息
+// checkVersion 从 Server 获取最新版本信息，如果 Server 不可达则 fallback 到 GitHub Releases API
 func (u *Updater) checkVersion() (*VersionInfo, error) {
-	url := fmt.Sprintf("%s/api/agent/version", u.httpAddr)
+	versionInfo, err := u.checkVersionFromServer()
+	if err == nil {
+		return versionInfo, nil
+	}
+
+	u.logger.Warn("server version check failed, trying GitHub fallback", zap.Error(err))
+
+	// Fallback: 直接查 GitHub Releases API
+	fallbackInfo, fbErr := u.checkVersionFromGitHub()
+	if fbErr != nil {
+		return nil, fmt.Errorf("server check failed: %w; github fallback also failed: %v", err, fbErr)
+	}
+
+	return fallbackInfo, nil
+}
+
+// checkVersionFromServer 从 Server 获取最新版本信息
+func (u *Updater) checkVersionFromServer() (*VersionInfo, error) {
+	url := fmt.Sprintf("%s/api/agent/version?arch=%s", u.httpAddr, runtime.GOARCH)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -174,17 +193,68 @@ func (u *Updater) checkVersion() (*VersionInfo, error) {
 	return &rawResp.Data, nil
 }
 
+// checkVersionFromGitHub 直接从 GitHub Releases API 获取最新版本（fallback）
+func (u *Updater) checkVersionFromGitHub() (*VersionInfo, error) {
+	apiURL := "https://api.github.com/repos/shangui999/nexus-xray/releases/latest"
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create github request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := u.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("github api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github api returned status %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Body    string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("decode github response: %w", err)
+	}
+
+	downloadURL := fmt.Sprintf("/api/agent/download?version=%s", release.TagName)
+
+	return &VersionInfo{
+		Version:      release.TagName,
+		DownloadURL:  downloadURL,
+		ReleaseNotes: release.Body,
+	}, nil
+}
+
 // downloadBinary 下载新版本二进制
+// downloadURL 可能是 Server 端的相对路径（/api/agent/download），
+// 也可能是 GitHub 完整 URL；Server 端会 302 重定向到 GitHub。
+// http.Client 默认跟随重定向，无需额外处理。
 func (u *Updater) downloadBinary(downloadURL string) (string, error) {
-	// 构建完整下载 URL
-	url := fmt.Sprintf("%s%s?os=%s&arch=%s", u.httpAddr, downloadURL, runtime.GOOS, runtime.GOARCH)
+	var url string
+	// 判断 downloadURL 是完整 URL 还是相对路径
+	if strings.HasPrefix(downloadURL, "http://") || strings.HasPrefix(downloadURL, "https://") {
+		// 完整 URL（可能是 GitHub 直链），直接使用
+		url = fmt.Sprintf("%s&os=%s&arch=%s", downloadURL, runtime.GOOS, runtime.GOARCH)
+		// 如果 URL 已经包含 os/arch 参数，不再重复添加
+		if strings.Contains(downloadURL, "os=") && strings.Contains(downloadURL, "arch=") {
+			url = downloadURL
+		}
+	} else {
+		// 相对路径，拼接 Server 地址
+		url = fmt.Sprintf("%s%s?os=%s&arch=%s", u.httpAddr, downloadURL, runtime.GOOS, runtime.GOARCH)
+	}
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("create download request: %w", err)
 	}
 
-	// 添加认证 header
+	// 添加认证 header（仅对 Server 端请求有效）
 	if u.nodeToken != "" {
 		req.Header.Set("X-Node-Token", u.nodeToken)
 	}

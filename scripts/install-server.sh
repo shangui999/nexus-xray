@@ -58,7 +58,7 @@ setup_directory() {
     cd ${INSTALL_DIR}
     
     # 创建 data 目录
-    mkdir -p data/postgres data/certs data/configs data/releases
+    mkdir -p data/postgres data/certs data/configs
 }
 
 # 下载项目文件

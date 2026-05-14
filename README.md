@@ -19,7 +19,7 @@ Server-Agent 架构的分布式 VPS Xray 代理管理平台，支持多节点集
 - ✏️ **自定义订阅地址** — 每个节点可设置独立订阅域名，灵活应对 CDN/NAT 场景
 - 📊 **流量配额与有效期管理** — 套餐制用户管理，支持流量倍率与连接数限制
 - 📈 **实时流量统计与图表** — 基于 ECharts 的可视化流量监控面板
-- 🔄 **Agent 自动升级** — 支持远程下发升级指令，Agent 自行拉取新版本
+- 🔄 **Agent 自动升级** — 基于 GitHub Releases 自动检测并拉取新版本
 - ☁️ **Cloudflare Tunnel 支持** — 通过 CF Tunnel 隐藏源站，安全暴露服务
 - 🐳 **Docker 一键部署** — 提供完整的 Docker Compose 编排，开箱即用
 - 🎨 **Vue 3 现代化管理面板** — Element Plus + ECharts 构建的专业管理界面
@@ -188,8 +188,7 @@ docker compose up -d
 data/
 ├── postgres/     # PostgreSQL 数据
 ├── certs/        # mTLS 证书
-├── configs/      # Server 配置文件
-└── releases/     # Agent 升级包
+└── configs/      # Server 配置文件
 ```
 
 ---

@@ -18,16 +18,16 @@ type ServerConfig struct {
 
 // AgentReleaseConfig 定义 Agent 二进制发布相关配置
 type AgentReleaseConfig struct {
-	Dir            string `yaml:"dir"`
-	CurrentVersion string `yaml:"current_version"`
+	CurrentVersion string `yaml:"current_version"` // 留空则自动从 GitHub Releases 获取
+	GithubRepo     string `yaml:"github_repo"`     // GitHub 仓库路径，默认 shangui999/nexus-xray
 }
 
-// ServerConfigSection 定义 Server 的 HTTP/gRPC 端口和 JWT 密钥
+// ServerConfigSection 定义 Server 的 HTTP/gRPC 统一端口和 JWT 密钥
+// Server 使用单端口设计（HTTP API + gRPC Agent 通信共用同一端口）
 type ServerConfigSection struct {
-	HTTPPort    int    `yaml:"http_port"`
-	GRPCPort    int    `yaml:"grpc_port"`
-	JWTSecret   string `yaml:"jwt_secret"`
-	ExternalAddr string `yaml:"external_addr"` // 对外 gRPC 地址（Agent 连接用）
+	HTTPPort     int    `yaml:"http_port"`
+	JWTSecret    string `yaml:"jwt_secret"`
+	ExternalAddr string `yaml:"external_addr"` // 对外地址（Agent 连接用，含端口）
 }
 
 // DatabaseConfig 定义 PostgreSQL 连接参数

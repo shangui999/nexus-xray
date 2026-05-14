@@ -17,5 +17,7 @@ log:
   format: json
 
 agent_release:
-  dir: "./releases"
-  current_version: "1.0.0"
+  # 留空则自动从 GitHub Releases 获取最新版本
+  # 填写则强制指定版本（用于私有部署/离线场景）
+  current_version: ""
+  github_repo: "shangui999/nexus-xray"

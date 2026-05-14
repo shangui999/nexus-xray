@@ -1,12 +1,13 @@
 package api
 
 import (
-	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shangui999/nexus-xray/internal/common/config"
@@ -15,131 +16,254 @@ import (
 
 // UpgradeHandler 处理 Agent 升级相关的 API 请求
 type UpgradeHandler struct {
-	cfg   *config.ServerConfig
+	cfg    *config.ServerConfig
 	logger *zap.Logger
+	cache  versionCache
 }
 
 // NewUpgradeHandler 创建升级处理器
 func NewUpgradeHandler(cfg *config.ServerConfig, logger *zap.Logger) *UpgradeHandler {
 	return &UpgradeHandler{
-		cfg:   cfg,
+		cfg:    cfg,
 		logger: logger,
+		cache: versionCache{
+			checksum: make(map[string]string),
+		},
 	}
 }
 
+// versionCache 缓存 GitHub Releases API 的查询结果
+type versionCache struct {
+	version   string
+	checksum  map[string]string // arch -> sha256
+	fetchedAt time.Time
+	mu        sync.RWMutex
+}
+
+const cacheTTL = 5 * time.Minute
+
 // VersionResponse 版本信息响应
 type VersionResponse struct {
-	Version       string `json:"version"`
+	Version        string `json:"version"`
 	ChecksumSHA256 string `json:"checksum_sha256"`
-	DownloadURL   string `json:"download_url"`
-	ReleaseNotes  string `json:"release_notes"`
+	DownloadURL    string `json:"download_url"`
+	ReleaseNotes   string `json:"release_notes"`
+}
+
+// githubRelease GitHub Releases API 响应结构
+type githubRelease struct {
+	TagName     string `json:"tag_name"`
+	Body        string `json:"body"`
+	HTMLURL     string `json:"html_url"`
+	PublishedAt string `json:"published_at"`
+	Assets      []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+		Size               int    `json:"size"`
+	} `json:"assets"`
 }
 
 // GetVersion 返回最新 Agent 版本信息
 // GET /api/agent/version
 func (h *UpgradeHandler) GetVersion(c *gin.Context) {
-	releaseDir := h.cfg.AgentRelease.Dir
-	currentVersion := h.cfg.AgentRelease.CurrentVersion
+	arch := c.DefaultQuery("arch", "amd64")
 
-	if currentVersion == "" {
-		Error(c, http.StatusNotFound, 404, "no agent version available")
+	// 优先使用配置中的固定版本
+	if h.cfg.AgentRelease.CurrentVersion != "" {
+		version := h.cfg.AgentRelease.CurrentVersion
+		downloadURL := fmt.Sprintf("/api/agent/download?version=%s&arch=%s", version, arch)
+
+		resp := VersionResponse{
+			Version:     version,
+			DownloadURL: downloadURL,
+		}
+		Success(c, resp)
 		return
 	}
 
-	// 尝试找到匹配的二进制文件来计算 checksum
-	// 查找目录中的 agent 二进制
+	// 自动从 GitHub Releases API 获取最新版本
+	version, checksumMap, releaseNotes, err := h.getLatestRelease()
+	if err != nil {
+		h.logger.Error("failed to fetch latest release from GitHub", zap.Error(err))
+		Error(c, http.StatusBadGateway, 502, fmt.Sprintf("failed to fetch latest release: %v", err))
+		return
+	}
+
 	checksum := ""
-	releaseNotes := ""
-
-	// 尝试读取 SHA256 校验文件
-	checksumFile := filepath.Join(releaseDir, fmt.Sprintf("agent-%s.sha256", currentVersion))
-	if data, err := os.ReadFile(checksumFile); err == nil {
-		checksum = string(data)
+	if c, ok := checksumMap[arch]; ok {
+		checksum = c
 	}
 
-	// 尝试读取发布说明文件
-	notesFile := filepath.Join(releaseDir, fmt.Sprintf("agent-%s-notes.txt", currentVersion))
-	if data, err := os.ReadFile(notesFile); err == nil {
-		releaseNotes = string(data)
-	}
-
-	// 如果没有 checksum 文件，尝试从二进制文件计算
-	if checksum == "" {
-		// 尝试找到任意平台的二进制来计算 checksum
-		pattern := filepath.Join(releaseDir, fmt.Sprintf("agent-%s-*", currentVersion))
-		matches, err := filepath.Glob(pattern)
-		if err == nil && len(matches) > 0 {
-			f, err := os.Open(matches[0])
-			if err == nil {
-				h := sha256.New()
-				if _, err := io.Copy(h, f); err == nil {
-					checksum = fmt.Sprintf("%x", h.Sum(nil))
-				}
-				f.Close()
-			}
-		}
-	}
+	downloadURL := fmt.Sprintf("/api/agent/download?version=%s&arch=%s", version, arch)
 
 	resp := VersionResponse{
-		Version:       currentVersion,
+		Version:        version,
 		ChecksumSHA256: checksum,
-		DownloadURL:   "/api/agent/download",
-		ReleaseNotes:  releaseNotes,
+		DownloadURL:    downloadURL,
+		ReleaseNotes:   releaseNotes,
 	}
 
 	Success(c, resp)
 }
 
-// DownloadBinary 下载 Agent 二进制文件
-// GET /api/agent/download?os=linux&arch=amd64
+// DownloadBinary 下载 Agent 二进制文件（302 重定向到 GitHub Release）
+// GET /api/agent/download?os=linux&arch=amd64&version=latest
 func (h *UpgradeHandler) DownloadBinary(c *gin.Context) {
-	osParam := c.Query("os")
-	archParam := c.Query("arch")
+	osParam := c.DefaultQuery("os", "linux")
+	archParam := c.DefaultQuery("arch", "amd64")
+	version := c.DefaultQuery("version", "latest")
 
-	if osParam == "" {
-		osParam = "linux"
-	}
-	if archParam == "" {
-		archParam = "amd64"
-	}
+	repo := h.getRepo()
 
-	releaseDir := h.cfg.AgentRelease.Dir
-	currentVersion := h.cfg.AgentRelease.CurrentVersion
-
-	if currentVersion == "" {
-		Error(c, http.StatusNotFound, 404, "no agent version available")
-		return
+	// 如果 version 是 "latest" 且配置了固定版本，使用固定版本
+	if version == "latest" && h.cfg.AgentRelease.CurrentVersion != "" {
+		version = h.cfg.AgentRelease.CurrentVersion
 	}
 
-	// 查找对应的二进制文件: agent-<version>-<os>-<arch>
-	filename := fmt.Sprintf("agent-%s-%s-%s", currentVersion, osParam, archParam)
-	filePath := filepath.Join(releaseDir, filename)
+	var url string
+	if version == "latest" {
+		url = fmt.Sprintf("https://github.com/%s/releases/latest/download/nexus-xray-agent-%s-%s", repo, osParam, archParam)
+	} else {
+		// 确保 version 带 v 前缀
+		if !strings.HasPrefix(version, "v") {
+			version = "v" + version
+		}
+		url = fmt.Sprintf("https://github.com/%s/releases/download/%s/nexus-xray-agent-%s-%s", repo, version, osParam, archParam)
+	}
 
-	// 如果精确匹配不存在，尝试不带平台后缀的文件名
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		// 尝试通用文件名
-		genericPath := filepath.Join(releaseDir, fmt.Sprintf("agent-%s", currentVersion))
-		if _, err := os.Stat(genericPath); os.IsNotExist(err) {
-			// 尝试 .zip 文件
-			zipPath := filepath.Join(releaseDir, fmt.Sprintf("agent-%s-%s-%s.zip", currentVersion, osParam, archParam))
-			if _, err := os.Stat(zipPath); os.IsNotExist(err) {
-				Error(c, http.StatusNotFound, 404, fmt.Sprintf("agent binary not found for %s/%s", osParam, archParam))
-				return
-			}
-			filePath = zipPath
-		} else {
-			filePath = genericPath
+	h.logger.Info("redirecting agent binary download",
+		zap.String("version", version),
+		zap.String("os", osParam),
+		zap.String("arch", archParam),
+		zap.String("url", url),
+	)
+
+	c.Redirect(302, url)
+}
+
+// getRepo 返回 GitHub 仓库路径
+func (h *UpgradeHandler) getRepo() string {
+	if h.cfg.AgentRelease.GithubRepo != "" {
+		return h.cfg.AgentRelease.GithubRepo
+	}
+	return "shangui999/nexus-xray"
+}
+
+// getLatestRelease 从 GitHub Releases API 获取最新版本（带缓存）
+func (h *UpgradeHandler) getLatestRelease() (string, map[string]string, string, error) {
+	// 检查缓存
+	h.cache.mu.RLock()
+	if h.cache.version != "" && time.Since(h.cache.fetchedAt) < cacheTTL {
+		version := h.cache.version
+		checksum := h.cache.checksum
+		h.cache.mu.RUnlock()
+		return version, checksum, "", nil
+	}
+	h.cache.mu.RUnlock()
+
+	// 请求 GitHub API
+	repo := h.getRepo()
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+
+	h.logger.Debug("fetching latest release from GitHub", zap.String("url", apiURL))
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("github api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, "", fmt.Errorf("github api returned status %d", resp.StatusCode)
+	}
+
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", nil, "", fmt.Errorf("decode github response: %w", err)
+	}
+
+	// 从 assets 中解析 checksums.txt
+	checksumMap := h.parseChecksums(release.Assets)
+
+	// 更新缓存
+	h.cache.mu.Lock()
+	h.cache.version = release.TagName
+	h.cache.checksum = checksumMap
+	h.cache.fetchedAt = time.Now()
+	h.cache.mu.Unlock()
+
+	return release.TagName, checksumMap, release.Body, nil
+}
+
+// parseChecksums 从 GitHub Release 的 assets 中解析 checksums.txt
+func (h *UpgradeHandler) parseChecksums(assets []struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Size               int    `json:"size"`
+}) map[string]string {
+	checksumMap := make(map[string]string)
+
+	// 查找 checksums.txt asset
+	var checksumURL string
+	for _, asset := range assets {
+		if asset.Name == "checksums.txt" || asset.Name == "sha256sums.txt" {
+			checksumURL = asset.BrowserDownloadURL
+			break
 		}
 	}
 
-	h.logger.Info("agent binary download",
-		zap.String("version", currentVersion),
-		zap.String("os", osParam),
-		zap.String("arch", archParam),
-		zap.String("file", filePath),
-	)
+	if checksumURL == "" {
+		return checksumMap
+	}
 
-	c.File(filePath)
+	// 下载 checksums 文件
+	resp, err := http.Get(checksumURL)
+	if err != nil {
+		h.logger.Warn("failed to download checksums file", zap.Error(err))
+		return checksumMap
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		h.logger.Warn("checksums file download failed", zap.Int("status", resp.StatusCode))
+		return checksumMap
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.logger.Warn("failed to read checksums file", zap.Error(err))
+		return checksumMap
+	}
+
+	// 解析每行，格式: <sha256>  nexus-xray-agent-linux-<arch>
+	lines := strings.Split(string(bodyBytes), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "  ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		hash := parts[0]
+		filename := parts[1]
+
+		// 从文件名提取 arch: nexus-xray-agent-linux-<arch>
+		if strings.HasPrefix(filename, "nexus-xray-agent-linux-") {
+			arch := strings.TrimPrefix(filename, "nexus-xray-agent-linux-")
+			checksumMap[arch] = hash
+		}
+	}
+
+	return checksumMap
 }
 
 // NodeTokenAuthMiddleware Node Token 认证中间件
