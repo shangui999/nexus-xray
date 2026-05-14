@@ -24,9 +24,10 @@ type AgentReleaseConfig struct {
 
 // ServerConfigSection 定义 Server 的 HTTP/gRPC 端口和 JWT 密钥
 type ServerConfigSection struct {
-	HTTPPort  int    `yaml:"http_port"`
-	GRPCPort  int    `yaml:"grpc_port"`
-	JWTSecret string `yaml:"jwt_secret"`
+	HTTPPort    int    `yaml:"http_port"`
+	GRPCPort    int    `yaml:"grpc_port"`
+	JWTSecret   string `yaml:"jwt_secret"`
+	ExternalAddr string `yaml:"external_addr"` // 对外 gRPC 地址（Agent 连接用）
 }
 
 // DatabaseConfig 定义 PostgreSQL 连接参数

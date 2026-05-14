@@ -119,9 +119,30 @@ cd web && npm install && npm run dev
 
 ### 生产部署
 
-#### 1. 准备环境配置
+#### 方式一：一键部署（推荐）
+
+在服务器上执行：
 
 ```bash
+curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/install-server.sh | bash
+```
+
+脚本会自动完成：
+1. 检测系统并安装 Docker / Docker Compose
+2. 创建安装目录 `/opt/nexus-xray`
+3. 下载 Docker Compose 配置与 Dockerfile
+4. 生成随机密码和密钥（`.env` 文件）
+5. 启动 PostgreSQL 和 Server 容器
+
+部署完成后访问 `http://<服务器IP>:8080`，默认账号 `admin / admin123`。
+
+#### 方式二：手动部署
+
+##### 1. 准备环境配置
+
+```bash
+git clone https://github.com/shangui999/nexus-xray.git
+cd nexus-xray
 cp .env.example .env
 # 编辑 .env，设置安全密码和密钥
 ```
@@ -135,15 +156,15 @@ cp .env.example .env
 | `SUBSCRIPTION_SECRET` | 订阅 HMAC 签名密钥 | `your-subscription-hmac-secret` |
 | `CF_TUNNEL_TOKEN` | Cloudflare Tunnel Token | `your-cloudflare-tunnel-token` |
 
-#### 2. 生成 mTLS 证书
+##### 2. 生成 mTLS 证书
 
 ```bash
-bash scripts/generate-certs.sh ./certs
+bash scripts/generate-certs.sh ./data/certs
 ```
 
-将生成的 `ca.crt`、`server.crt`、`server.key` 挂载到 Server 容器，`ca.crt` 分发给 Agent。
+将生成的 `ca.crt`、`server.crt`、`server.key` 放置在 `./data/certs/` 目录，`ca.crt` 分发给 Agent。
 
-#### 3. 配置 Cloudflare Tunnel（可选）
+##### 3. 配置 Cloudflare Tunnel（可选）
 
 在 [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) 控制台创建 Tunnel，获取 Token 填入 `.env`。
 
@@ -151,7 +172,7 @@ Tunnel 路由示例：
 - `panel.yourdomain.com` → `http://server:8080`（管理面板）
 - `grpc.yourdomain.com` → `grpc://server:8082`（Agent 连接）
 
-#### 4. 启动服务
+##### 4. 启动服务
 
 ```bash
 docker compose up -d
@@ -159,17 +180,29 @@ docker compose up -d
 
 服务启动后访问 `https://panel.yourdomain.com` 即可进入管理面板。
 
+### 数据目录结构
+
+所有持久化数据存储在 `./data/` 目录下：
+
+```
+data/
+├── postgres/     # PostgreSQL 数据
+├── certs/        # mTLS 证书
+├── configs/      # Server 配置文件
+└── releases/     # Agent 升级包
+```
+
 ---
 
 ## 🤖 Agent 部署
 
 ### 一键安装
 
-在目标 VPS 上执行：
+在管理面板中添加节点后，系统会自动生成安装命令，复制到目标 VPS 执行即可：
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/install-agent.sh | bash -s -- \
-  --server=grpc.yourdomain.com:443 \
+  --server=your-server.example.com:8082 \
   --node-id=your-node-id \
   --token=your-enrollment-token
 ```
@@ -401,15 +434,6 @@ log:
 - [ ] 多管理员与权限角色
 - [ ] 操作审计日志
 
-### Phase 3 — 高级特性 🚀
-
-- [ ] 付费集成（Stripe / 支付宝）
-- [ ] 自动化测试覆盖
-- [ ] Prometheus / Grafana 监控集成
-- [ ] Kubernetes Helm Chart
-- [ ] 多语言管理面板
-- [ ] 开放 API 文档（Swagger）
-
 ---
 
 ## 📁 项目结构
@@ -443,7 +467,8 @@ xray-manager/
 │   └── nodehub/v1/          # Protobuf 定义
 ├── scripts/
 │   ├── generate-certs.sh    # 生成 mTLS 证书
-│   └── install-agent.sh     # Agent 一键安装
+│   ├── install-agent.sh     # Agent 一键安装
+│   └── install-server.sh   # Server 一键部署
 ├── web/                     # Vue 3 前端
 │   ├── src/
 │   │   ├── api/             # API 请求封装

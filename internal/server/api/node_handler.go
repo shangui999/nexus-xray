@@ -95,7 +95,7 @@ func (h *NodeHandler) Create(c *gin.Context) {
 	}
 
 	installCmd := fmt.Sprintf(
-		"curl -sL https://raw.githubusercontent.com/xray-manager/xray-manager/main/scripts/install-agent.sh | bash -s -- --server=%s --node-id=%s --token=%s",
+		"curl -sSL https://raw.githubusercontent.com/shangui999/nexus-xray/main/scripts/install-agent.sh | bash -s -- --server=%s --node-id=%s --token=%s",
 		h.serverAddr, node.ID.String(), token,
 	)
 

@@ -9,6 +9,9 @@ bin/
 # Database
 *.db
 
+# Data directory (local persistent data)
+data/
+
 # Certificates
 certs/
 *.pem

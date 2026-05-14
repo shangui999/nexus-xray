@@ -18,7 +18,12 @@ func SetupRouter(db *gorm.DB, cfg *config.ServerConfig, logger *zap.Logger) *gin
 
 	// 初始化处理器
 	authHandler := NewAuthHandler(db, cfg.Server.JWTSecret)
-	nodeHandler := NewNodeHandler(db, fmt.Sprintf("localhost:%d", cfg.Server.GRPCPort))
+	// 确定对外 gRPC 地址：优先使用 external_addr 配置，回退到 localhost:grpc_port
+	grpcAddr := cfg.Server.ExternalAddr
+	if grpcAddr == "" {
+		grpcAddr = fmt.Sprintf("localhost:%d", cfg.Server.GRPCPort)
+	}
+	nodeHandler := NewNodeHandler(db, grpcAddr)
 	userHandler := NewUserHandler(db)
 	planHandler := NewPlanHandler(db)
 	inboundHandler := NewInboundHandler(db)
